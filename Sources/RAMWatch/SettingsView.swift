@@ -11,7 +11,7 @@ struct SettingsView: View {
     @AppStorage(Pref.orangeUsedPercent) private var orangeUsedPercent = 80
     @AppStorage(Pref.orangeOnAnySwap) private var orangeOnAnySwap = true
     @AppStorage(Pref.diskWarningEnabled) private var diskWarningEnabled = true
-    @AppStorage(Pref.diskWarningGB) private var diskWarningGB = 10
+    @AppStorage(Pref.diskWarningGB) private var diskWarningGB = 30
     @AppStorage(Pref.showText) private var showText = true
     @AppStorage(Pref.refreshSeconds) private var refreshSeconds = 2.0
 
@@ -70,19 +70,19 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Warn when disk space is low (orange icon and a notification)", isOn: $diskWarningEnabled)
+                Toggle("Warn when disk space is low", isOn: $diskWarningEnabled)
                 VStack(alignment: .leading) {
-                    Text("Turn orange when free space is below **\(diskWarningGB) GB**")
+                    Text("Warn when free space is below **\(diskWarningGB) GB**")
                     Slider(
-                        value: Binding(get: { Double(diskWarningGB) }, set: { diskWarningGB = Int($0.rounded()) }),
-                        in: 2...50
+                        value: Binding(get: { Double(diskWarningGB) }, set: { diskWarningGB = Int(($0 / 5).rounded()) * 5 }),
+                        in: 5...100
                     )
                 }
                 .disabled(!diskWarningEnabled)
             } header: {
                 Text("Disk space")
             } footer: {
-                Text("macOS needs free disk space to use as swap. When the disk is nearly full, a Mac that's low on memory gets much slower. Shows a drive icon in the menu bar and sends a notification (at most every 6 hours).")
+                Text("macOS needs free disk space to use as swap. When the disk is nearly full, a Mac that's low on memory gets much slower. Shows an orange drive badge next to the memory badge in the menu bar, and sends a notification (at most every 6 hours). Sizes match Finder.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

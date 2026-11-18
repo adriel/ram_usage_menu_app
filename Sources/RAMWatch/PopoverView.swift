@@ -100,7 +100,7 @@ struct PopoverView: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "internaldrive.fill").foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Low disk space: \(formatBytes(disk.free)) free").font(.callout.weight(.semibold))
+                Text("Low disk space: \(formatDiskBytes(disk.free)) free").font(.callout.weight(.semibold))
                 Text("Your Mac needs free space to use as extra memory. Empty the Trash or delete large files.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -243,7 +243,7 @@ private struct OverviewSection: View {
             HStack {
                 Text("Disk").font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("\(formatBytes(disk.free)) free of \(formatBytes(disk.total))")
+                Text("\(formatDiskBytes(disk.free)) free of \(formatDiskBytes(disk.total))")
                     .font(.subheadline).monospacedDigit()
                     .foregroundStyle(model.diskLow ? Color.orange : .secondary)
             }

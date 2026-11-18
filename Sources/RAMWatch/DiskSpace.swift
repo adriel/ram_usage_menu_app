@@ -20,6 +20,6 @@ enum DiskSpace {
 
     static func isLow(_ disk: DiskStatus?, defaults d: UserDefaults = .standard) -> Bool {
         guard let disk, d.bool(forKey: Pref.diskWarningEnabled) else { return false }
-        return disk.free < UInt64(d.integer(forKey: Pref.diskWarningGB)) * 1_073_741_824
+        return disk.free < UInt64(d.integer(forKey: Pref.diskWarningGB)) * 1_000_000_000
     }
 }

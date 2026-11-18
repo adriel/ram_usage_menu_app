@@ -25,7 +25,7 @@ enum Pref {
             orangeUsedPercent: 80,
             orangeOnAnySwap: true,
             diskWarningEnabled: true,
-            diskWarningGB: 10,
+            diskWarningGB: 30,
             showText: true,
             refreshSeconds: 2.0,
             autoCheckUpdates: true,

@@ -13,6 +13,21 @@ enum StatusIcon {
         pill(fill: fill, symbol: symbol, text: nil)
     }
 
+    /// Several badges side by side in one image.
+    static func joined(_ images: [NSImage], gap: CGFloat = 4) -> NSImage {
+        let width = images.reduce(0) { $0 + $1.size.width } + gap * CGFloat(max(0, images.count - 1))
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
+            var x: CGFloat = 0
+            for part in images {
+                part.draw(in: NSRect(x: x, y: 0, width: part.size.width, height: part.size.height))
+                x += part.size.width + gap
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
     /// Badge that can also carry text, e.g. "⚠ 3.5 GB" in the red state.
     static func pill(fill: NSColor, symbol: String, text: String?) -> NSImage {
         // Two-layer symbols (the warning triangle) get a coloured "!" punched into a white shape.

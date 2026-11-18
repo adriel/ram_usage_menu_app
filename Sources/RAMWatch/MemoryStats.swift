@@ -111,6 +111,14 @@ func formatBytes(_ bytes: UInt64) -> String {
     return String(format: "%.0f MB", mb)
 }
 
+/// Disk sizes in decimal GB, the way Finder and System Settings show them
+/// (memory uses binary GB, like Activity Monitor).
+func formatDiskBytes(_ bytes: UInt64) -> String {
+    let gb = Double(bytes) / 1e9
+    if gb >= 1 { return String(format: gb >= 10 ? "%.0f GB" : "%.1f GB", gb) }
+    return String(format: "%.0f MB", Double(bytes) / 1e6)
+}
+
 func formatRate(_ bytesPerSec: Double) -> String {
     formatBytes(UInt64(max(0, bytesPerSec))) + "/s"
 }

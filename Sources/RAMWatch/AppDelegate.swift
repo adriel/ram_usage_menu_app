@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let diskLow = DiskSpace.isLow(model.disk)
         let memoryHealth = evaluateHealth(snap)
-        let health = max(memoryHealth, diskLow ? .tight : .good)
+        let health = memoryHealth   // low disk space gets its own badge
 
         model.snapshot = snap
         model.memoryHealth = memoryHealth
@@ -124,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let content = UNMutableNotificationContent()
         content.title = "Low disk space"
-        content.body = "Only \(formatBytes(disk.free)) free. Your Mac needs free space to use as extra memory, so it will get slow. Empty the Trash or delete large files you don't need."
+        content.body = "Only \(formatDiskBytes(disk.free)) free. Your Mac needs free space to use as extra memory, so it will get slow. Empty the Trash or delete large files you don't need."
         content.sound = .default
         let request = UNNotificationRequest(identifier: "disk-warning", content: content, trigger: nil)
         Task { try? await UNUserNotificationCenter.current().add(request) }
@@ -152,24 +152,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button, let snap = model.snapshot else { return }
         let health = model.health
         let showText = UserDefaults.standard.bool(forKey: Pref.showText)
+        let lowDisk = model.diskLow ? model.disk : nil
+        let percent = "\(Int((snap.usedFraction * 100).rounded()))%"
 
+        // Memory badge. Red: one solid red pill with the swap amount, readable on any wallpaper.
+        let memory: NSImage
         if health == .swapping {
-            // Red: everything inside one solid red pill with white text, readable on any wallpaper.
-            button.image = StatusIcon.pill(
-                fill: health.badgeFill, symbol: "memorychip.fill",
-                text: showText ? formatBytes(snap.swapUsed) : nil)
+            memory = StatusIcon.pill(fill: health.badgeFill, symbol: "memorychip.fill",
+                                     text: showText ? formatBytes(snap.swapUsed) : nil)
+        } else if lowDisk != nil {
+            // Next to the disk badge, the % goes inside the pill too so the two read as a pair.
+            memory = StatusIcon.pill(fill: health.badgeFill, symbol: "memorychip.fill", text: showText ? percent : nil)
+        } else {
+            memory = StatusIcon.badge(fill: health.badgeFill)
+        }
+
+        if lowDisk != nil {
+            // Low disk space: an orange drive badge, inside the same menu bar
+            // item (a second item would land behind the menu bar's overflow on a crowded bar).
+            // Icon only, to keep the item narrow; the free space is in the tooltip and the menu.
+            let drive = StatusIcon.badge(fill: Health.tight.badgeFill, symbol: "internaldrive.fill")
+            button.image = StatusIcon.joined([memory, drive], gap: 3)
             button.title = ""
         } else {
-            // Green / orange: coloured badge + % in the normal menu bar text colour.
-            // A drive glyph when it's low disk space (not memory) making it orange.
-            let diskOnly = model.diskLow && model.memoryHealth < .tight
-            button.image = StatusIcon.badge(fill: health.badgeFill, symbol: diskOnly ? "internaldrive.fill" : "memorychip.fill")
-            button.title = showText ? " \(Int((snap.usedFraction * 100).rounded()))%" : ""
+            button.image = memory
+            // Green / orange: % in the normal menu bar text colour.
+            button.title = health == .swapping || !showText ? "" : " \(percent)"
             button.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
         }
 
         var tip = "\(model.memoryHealth.title): \(formatBytes(snap.used)) of \(formatBytes(snap.total)) used, swap \(formatBytes(snap.swapUsed))"
-        if model.diskLow, let disk = model.disk { tip += "\nLow disk space: \(formatBytes(disk.free)) free" }
+        if let disk = lowDisk {
+            tip += "\nLow disk space: \(formatDiskBytes(disk.free)) free (warns below \(UserDefaults.standard.integer(forKey: Pref.diskWarningGB)) GB)"
+        }
         button.toolTip = tip
     }
 

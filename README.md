@@ -8,7 +8,9 @@ A tiny macOS menu bar app that shows, at a glance, whether your Mac is running o
 | 🟠 Orange | Memory used is over the set % (default 80%), memory pressure is "Warning", or some swap is in use |
 | 🔴 Red pill with swap amount | Swap used is over the set amount (default 1 GB), or memory pressure is "Critical" |
 
-A drive icon on an orange badge means free disk space is low (default under 10 GB). macOS needs free disk space for swap.
+An orange drive badge next to the memory badge means free disk space is low (default: under 30 GB, measured like Finder). Hover over it or open the menu for the exact free space. macOS needs free disk space for swap.
+
+If RAM Watch disappears behind the `<<` at the left of a crowded menu bar, hold ⌘ and drag its icon further right; macOS hides the leftmost items first.
 
 Click the icon to see:
 - **Overview:** a memory-over-time graph (15 min / 1 h / 6 h / 24 h, kept across restarts), a breakdown of App memory, Wired, Compressed, Cached files and Free memory (hover over any part to see what it is and, for App memory, which apps use the most), memory pressure, swap used against the red level and whether the Mac is swapping right now, and free disk space
