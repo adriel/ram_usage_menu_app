@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import Observation
+import Security
 
 /// Keeps RAM Watch up to date from the GitHub repo's releases.
 ///
@@ -125,7 +126,35 @@ final class Updater {
         else { throw UpdateError("The download isn't the expected version of RAM Watch.") }
 
         try await Tool.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path])
+        try Self.checkSameSigner(newApp)
         _ = try fm.replaceItemAt(appURL, withItemAt: newApp)
+    }
+
+    /// If this copy is signed with a certificate, the update must meet this copy's designated
+    /// requirement: same bundle id, signed with the same certificate. (An ad-hoc signed copy
+    /// has nothing stable to compare against, so it relies on the other checks.)
+    private static func checkSameSigner(_ newApp: URL) throws {
+        var me: SecCode?
+        var meStatic: SecStaticCode?
+        var info: CFDictionary?
+        guard SecCodeCopySelf([], &me) == errSecSuccess, let me,
+              SecCodeCopyStaticCode(me, [], &meStatic) == errSecSuccess, let meStatic,
+              SecCodeCopySigningInformation(meStatic, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess
+        else { throw UpdateError("Couldn't read RAM Watch's own signature.") }
+
+        let flags = ((info as? [String: Any])?[kSecCodeInfoFlags as String] as? NSNumber)?.uint32Value ?? 0
+        if flags & SecCodeSignatureFlags.adhoc.rawValue != 0 { return }
+
+        var requirement: SecRequirement?
+        var update: SecStaticCode?
+        guard SecCodeCopyDesignatedRequirement(meStatic, [], &requirement) == errSecSuccess,
+              SecStaticCodeCreateWithPath(newApp as CFURL, [], &update) == errSecSuccess, let update
+        else { throw UpdateError("Couldn't read the update's signature.") }
+
+        let checks = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode)
+        guard SecStaticCodeCheckValidity(update, checks, requirement) == errSecSuccess else {
+            throw UpdateError("The update isn't signed by the same developer as this copy.")
+        }
     }
 
     /// Opens the new copy once this one has quit.

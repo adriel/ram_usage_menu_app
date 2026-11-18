@@ -20,5 +20,9 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 ./build.sh
+if ! codesign -d -r- "build/RAM Watch.app" 2>&1 | grep -q 'certificate leaf'; then
+  echo "Refusing to release an ad-hoc signed build: the \"RAM Watch Code Signing\" certificate isn't in your keychain." >&2
+  exit 1
+fi
 gh release create "$TAG" build/RAM-Watch.zip --title "RAM Watch $VERSION" --notes "$NOTES" --target "$(git rev-parse HEAD)"
 echo "Released $TAG"

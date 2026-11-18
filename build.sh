@@ -32,8 +32,18 @@ xcrun actool "$ROOT/Resources/AppIcon.icon" --compile "$ROOT/$BUILD/icon" \
   --output-partial-info-plist "$ROOT/$BUILD/icon/partial.plist" >/dev/null
 cp "$BUILD/icon/Assets.car" "$BUILD/icon/AppIcon.icns" "$APP/Contents/Resources/"
 
-# Ad-hoc signature (no Apple Developer account needed).
-codesign --force --sign - "$APP"
+# Sign with the self-signed "RAM Watch Code Signing" certificate when it's in the keychain.
+# Every build signed with it has the same identity, so macOS keeps the browser (Automation)
+# permission across rebuilds and updates, and the updater can check updates come from the
+# same signer. Without it, fall back to an ad-hoc signature.
+IDENTITY="RAM Watch Code Signing"
+if security find-identity -p codesigning | grep -q "\"$IDENTITY\""; then
+  codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
+  echo "Signed with \"$IDENTITY\""
+else
+  codesign --force --sign - "$APP"
+  echo "Signed ad hoc (\"$IDENTITY\" not in keychain; see README)"
+fi
 
 # Zip for sending to another Mac.
 rm -f "$BUILD/RAM-Watch.zip"

@@ -44,11 +44,18 @@ Safari's AppleScript dictionary has a hidden `pid` property on each tab: the Web
 
 Chrome, Brave and Edge have no such property, and their renderer processes don't say which tab they draw. So for those browsers RAM Watch adds up all of their tab processes (leaving out extensions and the browser's own UI) and shows that as the total. Chrome's own **Window → Task Manager** shows per-tab memory.
 
-Note: with an ad-hoc signed build, macOS ties the Automation permission to that exact build. After you rebuild or update, macOS may ask again.
+## Signing
+
+`build.sh` signs with a self-signed certificate called **RAM Watch Code Signing** when it's in your keychain (create it once with `Scripts/make_signing_cert.sh`). Every build signed with it has the same identity, so:
+
+- macOS keeps the "control Safari/Chrome" permission across rebuilds and updates, instead of asking again each time;
+- the updater only installs an update signed with the same certificate as the running copy.
+
+Back up that certificate (Keychain Access → My Certificates → RAM Watch Code Signing → Export…). Installed copies only accept updates signed with it. `release.sh` refuses to publish a build that isn't. Without the certificate, `build.sh` falls back to an ad-hoc signature, and macOS then asks for the browser permission again after each rebuild.
 
 ## Updates
 
-RAM Watch checks this repo's [latest release](https://github.com/adriel/ram_usage_menu_app/releases/latest) once a day. When there's a newer version, it downloads `RAM-Watch.zip` and checks it: the SHA-256 digest GitHub reports, the bundle id, the version number and the code signature. Then it swaps itself for the new copy and restarts, never while its menu is open. You can turn off automatic installing (or checking) in Settings, or click **Check Now**.
+RAM Watch checks this repo's [latest release](https://github.com/adriel/ram_usage_menu_app/releases/latest) once a day. When there's a newer version, it downloads `RAM-Watch.zip` and checks it: the SHA-256 digest GitHub reports, the bundle id, the version number, and that it's signed with the same certificate (see Signing). Then it swaps itself for the new copy and restarts, never while its menu is open. You can turn off automatic installing (or checking) in Settings, or click **Check Now**.
 
 To publish an update:
 
