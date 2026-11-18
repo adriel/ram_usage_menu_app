@@ -48,7 +48,7 @@ enum Health: Int, Comparable {
 enum PopoverSection: String, CaseIterable, Identifiable {
     case overview = "Overview"
     case apps = "Apps"
-    case tabs = "Safari Tabs"
+    case tabs = "Tabs"
     var id: Self { self }
 }
 
@@ -64,15 +64,29 @@ final class AppModel {
     var diskLow = false
     let history = MemoryHistory()
 
-    var tabs: [SafariTab] = []
+    var tabs: [BrowserTab] = []
     var unloadedTabs = 0
+    var tabsTotalBytes: UInt64?
     var tabsStatus: TabsStatus = .idle
+    var runningBrowsers: [Browser] = []
+    let updater = Updater()
 
     var section: PopoverSection =
         PopoverSection(rawValue: UserDefaults.standard.string(forKey: Pref.popoverSection) ?? "") ?? .overview {
         didSet {
             UserDefaults.standard.set(section.rawValue, forKey: Pref.popoverSection)
-            if section == .tabs { refreshTabs() }
+            if section == .tabs { refreshTabs(force: true) }
+        }
+    }
+
+    var browser: Browser =
+        Browser(rawValue: UserDefaults.standard.string(forKey: Pref.tabsBrowser) ?? "") ?? .safari {
+        didSet {
+            guard browser != oldValue else { return }
+            UserDefaults.standard.set(browser.rawValue, forKey: Pref.tabsBrowser)
+            tabs = []
+            tabsStatus = .loading
+            refreshTabs(force: true)
         }
     }
 
@@ -83,25 +97,35 @@ final class AppModel {
     @ObservationIgnored var openSettings: () -> Void = {}
     @ObservationIgnored var refreshApps: () -> Void = {}
 
-    /// Re-reads Safari's tabs unless a read is already running (or ran very recently).
+    /// Re-reads the chosen browser's tabs unless a read is already running (or ran very recently).
     func refreshTabs(force: Bool = false) {
         guard tabsTask == nil else { return }
         guard force || Date.now.timeIntervalSince(lastTabsFetch) > 2.5 else { return }
+
+        runningBrowsers = Browser.running
+        // If the chosen browser isn't open but another one is, show that one.
+        if !runningBrowsers.contains(browser), let first = runningBrowsers.first {
+            browser = first   // didSet starts the fetch
+            return
+        }
         if tabs.isEmpty { tabsStatus = .loading }
+        let target = browser
         tabsTask = Task {
-            let result = await SafariTabs.fetch()
+            let result = await BrowserTabs.fetch(target)
+            tabsTask = nil
+            lastTabsFetch = .now
+            guard target == browser else { refreshTabs(force: true); return }
             tabs = result.tabs
             unloadedTabs = result.unloadedCount
+            tabsTotalBytes = result.totalBytes
             tabsStatus = result.status
-            lastTabsFetch = .now
-            tabsTask = nil
         }
     }
 
-    func close(_ tab: SafariTab) {
+    func close(_ tab: BrowserTab) {
         tabs.removeAll { $0.id == tab.id }   // feels instant; the refresh below corrects it
         Task {
-            if let failure = await SafariTabs.close(tab) { tabsStatus = failure }
+            if let failure = await BrowserTabs.close(tab) { tabsStatus = failure }
             try? await Task.sleep(for: .milliseconds(700))
             refreshTabs(force: true)
             refreshApps()

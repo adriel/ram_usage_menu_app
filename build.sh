@@ -22,13 +22,15 @@ xcrun swiftc -O -swift-version 6 -default-isolation MainActor \
   -o "$APP/Contents/MacOS/$EXEC"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
-if [ ! -f "$BUILD/AppIcon.icns" ]; then
-  echo "Rendering icon…"
-  rm -rf "$BUILD/AppIcon.iconset"
-  xcrun swift Scripts/make_icon.swift "$BUILD/AppIcon.iconset"
-  iconutil -c icns "$BUILD/AppIcon.iconset" -o "$BUILD/AppIcon.icns"
-fi
-cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+echo "Compiling icon…"
+# Liquid Glass icon made in Icon Composer format (Resources/AppIcon.icon).
+# actool needs absolute paths.
+ROOT="$(pwd)"
+rm -rf "$BUILD/icon" && mkdir -p "$BUILD/icon"
+xcrun actool "$ROOT/Resources/AppIcon.icon" --compile "$ROOT/$BUILD/icon" \
+  --platform macosx --minimum-deployment-target "$MIN_OS" --app-icon AppIcon \
+  --output-partial-info-plist "$ROOT/$BUILD/icon/partial.plist" >/dev/null
+cp "$BUILD/icon/Assets.car" "$BUILD/icon/AppIcon.icns" "$APP/Contents/Resources/"
 
 # Ad-hoc signature (no Apple Developer account needed).
 codesign --force --sign - "$APP"

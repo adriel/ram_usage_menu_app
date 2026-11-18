@@ -31,14 +31,43 @@ if CommandLine.arguments.contains("--dump") {
     exit(0)
 }
 
-// `RAMWatch --tabs` prints Safari's tabs with memory (tests the AppleScript bridge).
-if CommandLine.arguments.contains("--tabs") {
+// `RAMWatch --tabs [safari|chrome|brave|edge]` prints a browser's tabs (tests the AppleScript bridge).
+if let i = CommandLine.arguments.firstIndex(of: "--tabs") {
+    let name = CommandLine.arguments.dropFirst(i + 1).first ?? "safari"
+    guard let browser = Browser(rawValue: name) else { fatalError("Unknown browser \(name)") }
     Task {
-        let r = await SafariTabs.fetch()
-        print("Status: \(r.status), asleep: \(r.unloadedCount)")
+        let r = await BrowserTabs.fetch(browser)
+        print("Status: \(r.status), asleep: \(r.unloadedCount), total: \(r.totalBytes.map(formatBytes) ?? "-")")
         for t in r.tabs {
             let title = String(t.title.prefix(44)).padding(toLength: 44, withPad: " ", startingAt: 0)
-            print("  \(title) \(formatBytes(t.bytes))\tpid \(t.pid)\t\(t.host)\(t.sharedWith > 0 ? " (shared)" : "")")
+            print("  \(title) \(t.bytes.map(formatBytes) ?? "")\tid \(t.tabID)\(t.pid)\t\(t.host)")
+        }
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
+// `RAMWatch --close-tab chrome <windowID> <tabID> <url>` closes one Chromium tab (testing).
+if let i = CommandLine.arguments.firstIndex(of: "--close-tab") {
+    let a = Array(CommandLine.arguments.dropFirst(i + 1))
+    guard a.count == 4, let browser = Browser(rawValue: a[0]) else { fatalError("usage: --close-tab <browser> <window> <tab> <url>") }
+    Task {
+        let tab = BrowserTab(browser: browser, windowID: a[1], index: 0, tabID: a[2], pid: 0, title: "", url: a[3])
+        print(await BrowserTabs.close(tab).map { "\($0)" } ?? "ok")
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
+// `RAMWatch --update` checks GitHub and, if there's a newer release, installs it over this copy.
+if CommandLine.arguments.contains("--update") {
+    Task {
+        let updater = Updater()
+        await updater.check(userInitiated: true)
+        print("Installed \(updater.currentVersion): \(updater.state)")
+        if case .available(let r) = updater.state {
+            await updater.install(r, relaunch: false)
+            print("After install: \(updater.state)")
         }
         exit(0)
     }

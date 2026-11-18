@@ -49,6 +49,35 @@ enum ProcessMemory {
         return n > 0 ? String(decoding: buf.prefix(Int(n)), as: UTF8.self) : nil
     }
 
+    static func parent(of pid: pid_t) -> pid_t? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size ? pid_t(info.pbi_ppid) : nil
+    }
+
+    /// Command-line arguments of one of our own user's processes.
+    static func arguments(of pid: pid_t) -> [String]? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var buf = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return nil }
+
+        // Layout: argc, executable path, NUL padding, then argc NUL-terminated strings.
+        let argc = buf.withUnsafeBytes { Int($0.loadUnaligned(as: Int32.self)) }
+        var i = MemoryLayout<Int32>.size
+        while i < size, buf[i] != 0 { i += 1 }   // skip executable path
+        while i < size, buf[i] == 0 { i += 1 }   // skip padding
+        var args: [String] = []
+        while args.count < argc, i < size {
+            let start = i
+            while i < size, buf[i] != 0 { i += 1 }
+            args.append(String(decoding: buf[start..<i], as: UTF8.self))
+            i += 1
+        }
+        return args
+    }
+
     /// Outermost .app bundle containing the executable, if any.
     static func appBundlePath(from path: String) -> String? {
         guard let r = path.range(of: ".app/") else { return nil }

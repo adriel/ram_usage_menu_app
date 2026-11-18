@@ -3,8 +3,6 @@ import Foundation
 /// UserDefaults keys + defaults. Views bind with @AppStorage using these keys.
 enum Pref {
     static let warningEnabled = "warningEnabled"
-    static let flashIcon = "flashIcon"
-    static let notify = "notify"
     static let swapWarningMB = "swapWarningMB"
     static let requirePressure = "requirePressure"
     static let orangeUsedPercent = "orangeUsedPercent"
@@ -14,12 +12,14 @@ enum Pref {
     static let showText = "showText"
     static let refreshSeconds = "refreshSeconds"
     static let popoverSection = "popoverSection"
+    static let tabsBrowser = "tabsBrowser"
+    static let autoCheckUpdates = "autoCheckUpdates"
+    static let autoInstallUpdates = "autoInstallUpdates"
+    static let lastUpdateCheck = "lastUpdateCheck"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
             warningEnabled: true,
-            flashIcon: true,
-            notify: true,
             swapWarningMB: 1024,
             requirePressure: false,
             orangeUsedPercent: 80,
@@ -28,6 +28,8 @@ enum Pref {
             diskWarningGB: 10,
             showText: true,
             refreshSeconds: 2.0,
+            autoCheckUpdates: true,
+            autoInstallUpdates: true,
         ])
     }
 }

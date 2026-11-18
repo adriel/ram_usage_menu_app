@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UserNotifications
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = AppModel()
     private let sampler = MemorySampler()
     private var statusItem: NSStatusItem!
@@ -10,14 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var settingsWindow: NSWindow?
 
     private var sampleTask: Task<Void, Never>?
-    private var flashTask: Task<Void, Never>?
-    private var flashPhase = false
 
     // Warning episode state
     private var warningActive = false
-    private var acknowledgedAt: Date?
     private var lastNotifiedAt: Date?
-    private let reflashAfter: Duration = .seconds(15 * 60)
     private let minNotifyGap: TimeInterval = 30 * 60
     private var lastDiskCheck = Date.distantPast
     private var lastDiskNotifiedAt: Date?
@@ -41,7 +37,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host
         popover.behavior = .transient
-        popover.delegate = self
 
         startSampling()
 
@@ -52,7 +47,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
-        if UserDefaults.standard.bool(forKey: Pref.notify) {
+        // Daily update check (first one shortly after launch). Never restarts while the menu is open.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            while let self, !Task.isCancelled {
+                await self.model.updater.checkIfDue(canInstall: !self.popover.isShown)
+                try? await Task.sleep(for: .seconds(3600))
+            }
+        }
+
+        if UserDefaults.standard.bool(forKey: Pref.warningEnabled) || UserDefaults.standard.bool(forKey: Pref.diskWarningEnabled) {
             Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
         }
     }
@@ -92,8 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         if popover.isShown {
             switch model.section {
-            case .overview: break
-            case .apps: model.apps = ProcessMemory.topApps(limit: 8)
+            case .overview, .apps: model.apps = ProcessMemory.topApps(limit: 8)
             case .tabs: model.refreshTabs()
             }
         }
@@ -102,42 +105,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         updateButton()
     }
 
-    // MARK: - Warning (flash + notification)
+    // MARK: - Warnings (notifications)
 
     private func handleWarning(health: Health, snapshot: MemorySnapshot) {
-        let d = UserDefaults.standard
         let red = health == .swapping
-
-        if red && !warningActive {
-            warningActive = true
-            acknowledgedAt = nil
-        } else if !red && warningActive {
-            warningActive = false
-        }
-
-        guard warningActive, d.bool(forKey: Pref.warningEnabled) else {
-            stopFlashing()
-            return
-        }
-
-        if d.bool(forKey: Pref.notify) {
-            let recentlyNotified = lastNotifiedAt.map { Date.now.timeIntervalSince($0) < minNotifyGap } ?? false
-            if !recentlyNotified {
-                lastNotifiedAt = .now
-                sendNotification(snapshot)
-            }
-        }
-
-        let snoozed = acknowledgedAt.map { Date.now.timeIntervalSince($0) < reflashAfter.timeInterval } ?? false
-        if d.bool(forKey: Pref.flashIcon) && !snoozed && !popover.isShown {
-            startFlashing()
-        } else {
-            stopFlashing()
-        }
+        defer { warningActive = red }
+        // Notify once when it turns red (and again at most every 30 minutes while it stays red).
+        guard red, UserDefaults.standard.bool(forKey: Pref.warningEnabled) else { return }
+        if let last = lastNotifiedAt, Date.now.timeIntervalSince(last) < minNotifyGap { return }
+        lastNotifiedAt = .now
+        sendNotification(snapshot)
     }
 
     private func handleDiskWarning(diskLow: Bool) {
-        guard diskLow, let disk = model.disk, UserDefaults.standard.bool(forKey: Pref.notify) else { return }
+        guard diskLow, let disk = model.disk else { return }
         if let last = lastDiskNotifiedAt, Date.now.timeIntervalSince(last) < diskNotifyGap { return }
         lastDiskNotifiedAt = .now
 
@@ -165,24 +146,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Task { try? await UNUserNotificationCenter.current().add(request) }
     }
 
-    private func startFlashing() {
-        guard flashTask == nil else { return }
-        flashTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(600))
-                guard let self, !Task.isCancelled else { return }
-                self.flashPhase.toggle()
-                self.updateButton()
-            }
-        }
-    }
-
-    private func stopFlashing() {
-        flashTask?.cancel()
-        flashTask = nil
-        flashPhase = false
-    }
-
     // MARK: - Menu bar button
 
     private func updateButton() {
@@ -191,12 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let showText = UserDefaults.standard.bool(forKey: Pref.showText)
 
         if health == .swapping {
-            // Red: everything inside one solid red pill, white text. Flashing alternates
-            // between bright red + chip and dark red + warning triangle.
-            let alt = flashTask != nil && flashPhase
+            // Red: everything inside one solid red pill with white text, readable on any wallpaper.
             button.image = StatusIcon.pill(
-                fill: alt ? NSColor(srgbRed: 0.42, green: 0.03, blue: 0.03, alpha: 1) : health.badgeFill,
-                symbol: alt ? "exclamationmark.triangle.fill" : "memorychip.fill",
+                fill: health.badgeFill, symbol: "memorychip.fill",
                 text: showText ? formatBytes(snap.swapUsed) : nil)
             button.title = ""
         } else {
@@ -226,16 +186,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    func popoverWillShow(_ notification: Notification) {
-        if warningActive { acknowledgedAt = .now }
-        stopFlashing()
-        updateButton()
-    }
-
     private func openSettings() {
         popover.performClose(nil)
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(updater: model.updater)))
             window.title = "RAM Watch Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
@@ -244,12 +198,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NSApp.activate()
         settingsWindow?.center()
         settingsWindow?.makeKeyAndOrderFront(nil)
-    }
-}
-
-private extension Duration {
-    var timeInterval: TimeInterval {
-        let (s, attos) = components
-        return TimeInterval(s) + TimeInterval(attos) / 1e18
     }
 }

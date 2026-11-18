@@ -2,9 +2,10 @@ import ServiceManagement
 import SwiftUI
 
 struct SettingsView: View {
+    let updater: Updater
+    @AppStorage(Pref.autoCheckUpdates) private var autoCheckUpdates = true
+    @AppStorage(Pref.autoInstallUpdates) private var autoInstallUpdates = true
     @AppStorage(Pref.warningEnabled) private var warningEnabled = true
-    @AppStorage(Pref.flashIcon) private var flashIcon = true
-    @AppStorage(Pref.notify) private var notify = true
     @AppStorage(Pref.swapWarningMB) private var swapWarningMB = 1024
     @AppStorage(Pref.requirePressure) private var requirePressure = false
     @AppStorage(Pref.orangeUsedPercent) private var orangeUsedPercent = 80
@@ -44,15 +45,11 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Warn me when it goes red", isOn: $warningEnabled)
-                Toggle("Flash the menu bar icon", isOn: $flashIcon)
-                    .disabled(!warningEnabled)
-                Toggle("Show a notification", isOn: $notify)
-                    .disabled(!warningEnabled)
+                Toggle("Show a notification when it turns red", isOn: $warningEnabled)
             } header: {
                 Text("Warning")
             } footer: {
-                Text("Flashing stops when you click the icon, and starts again after 15 minutes if it's still red. Memory notifications are sent at most every 30 minutes.")
+                Text("Sent when it first turns red, then at most every 30 minutes while it stays red.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -73,7 +70,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Warn when disk space is low", isOn: $diskWarningEnabled)
+                Toggle("Warn when disk space is low (orange icon and a notification)", isOn: $diskWarningEnabled)
                 VStack(alignment: .leading) {
                     Text("Turn orange when free space is below **\(diskWarningGB) GB**")
                     Slider(
@@ -115,9 +112,42 @@ struct SettingsView: View {
                     Text(loginError).font(.caption).foregroundStyle(.red)
                 }
             }
+
+            Section {
+                Toggle("Check for updates every day", isOn: $autoCheckUpdates)
+                Toggle("Install updates automatically", isOn: $autoInstallUpdates)
+                    .disabled(!autoCheckUpdates)
+                HStack {
+                    updateStatus.font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    switch updater.state {
+                    case .available(let release):
+                        Button("Install \(release.version)") { Task { await updater.install(release) } }
+                    case .checking, .installing:
+                        ProgressView().controlSize(.small)
+                    default:
+                        Button("Check Now") { Task { await updater.check(userInitiated: true) } }
+                    }
+                }
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text("Updates come from the RAM Watch releases on GitHub. Installing one restarts RAM Watch, never while its menu is open.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 460, height: 680)   // the form scrolls; fits a 13" laptop screen
+    }
+
+    @ViewBuilder private var updateStatus: some View {
+        switch updater.state {
+        case .checking: Text("Checking…")
+        case .installing: Text("Installing the update…")
+        case .upToDate: Text("RAM Watch \(updater.currentVersion) is the latest version.")
+        case .available(let r): Text("Version \(r.version) is available (you have \(updater.currentVersion)).")
+        case .failed(let message): Text(message).foregroundStyle(.red)
+        case .idle: Text("Version \(updater.currentVersion)")
+        }
     }
 }
