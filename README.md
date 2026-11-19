@@ -13,7 +13,7 @@ An orange drive badge next to the memory badge means free disk space is low (def
 If RAM Watch disappears behind the `<<` at the left of a crowded menu bar, hold ⌘ and drag its icon further right; macOS hides the leftmost items first.
 
 Click the icon to see:
-- **Overview:** a memory-over-time graph (15 min / 1 h / 6 h / 24 h, kept across restarts), a breakdown of App memory, Wired, Compressed and Free memory (hover over any part to see what it is; App memory lists the apps using the most, and Free splits into cached files and completely unused memory), memory pressure, swap used against the red level and whether the Mac is swapping right now, and free disk space
+- **Overview:** a memory-over-time graph (15 min / 1 h / 6 h / 24 h / 7 days, kept across restarts; gaps show when the Mac was asleep or RAM Watch wasn't running), a breakdown of App memory, Wired, Compressed and Free memory (hover over any part to see what it is; App memory lists the apps using the most, and Free splits into cached files and completely unused memory), memory pressure, swap used against the red level and whether the Mac is swapping right now, and free disk space
 - **Apps:** the apps using the most memory, with each app's helper processes counted under it (so every browser tab process counts toward the browser). Hover over an app to quit it.
 - **Tabs:** open tabs in Safari, Chrome, Brave or Edge, with a ⊗ button to close each one. Safari tabs are sorted by how much memory each uses. Chromium browsers don't reveal which process belongs to which tab, so their tabs are listed in order with the total for all of them. The first time, macOS asks whether RAM Watch may control the browser; click **OK**.
 

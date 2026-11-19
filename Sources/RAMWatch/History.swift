@@ -11,14 +11,27 @@ struct HistoryPoint: Codable, Identifiable {
     var date: Date { Date(timeIntervalSince1970: t) }
 }
 
-/// Rolling 24 h record of memory used + swap, one point every 10 s,
-/// saved to Application Support so the graph survives restarts.
+/// A point ready to draw. `segment` changes wherever recording stopped (Mac asleep or
+/// RAM Watch not running), so the graph shows a gap there instead of a line across it.
+struct ChartPoint: Identifiable {
+    let date: Date
+    let used: Double
+    let swap: Double
+    let segment: Int
+    var id: Date { date }
+}
+
+/// Rolling 7-day record of memory used + swap, saved to Application Support so the graph
+/// survives restarts. The last 24 h keep a point every 10 s; older data is thinned to one
+/// point per minute (each minute's peak), which keeps the file around 1 MB.
 @Observable
 final class MemoryHistory {
     private(set) var points: [HistoryPoint] = []
 
     @ObservationIgnored private let interval: TimeInterval = 10
-    @ObservationIgnored private let keep: TimeInterval = 24 * 3600
+    @ObservationIgnored private let keep: TimeInterval = 7 * 24 * 3600
+    @ObservationIgnored private let fullDetail: TimeInterval = 24 * 3600
+    @ObservationIgnored private let thinnedStep: TimeInterval = 60
     @ObservationIgnored private var lastSave = Date.distantPast
 
     private static let fileURL: URL = {
@@ -30,20 +43,19 @@ final class MemoryHistory {
     init() {
         if let data = try? Data(contentsOf: Self.fileURL),
            let saved = try? JSONDecoder().decode([HistoryPoint].self, from: data) {
-            let cutoff = Date.now.timeIntervalSince1970 - keep
-            points = saved.filter { $0.t >= cutoff }
+            points = saved.sorted { $0.t < $1.t }
+            compact()
         }
     }
 
     func record(_ s: MemorySnapshot) {
-        let now = Date.now.timeIntervalSince1970
+        let now = Date.now.timeIntervalSince1970.rounded()
         if let last = points.last, now - last.t < interval - 0.5 { return }
-        points.append(HistoryPoint(t: now, used: gb(s.used), swap: gb(s.swapUsed)))
-        let cutoff = now - keep
-        if let first = points.first, first.t < cutoff {
-            points.removeAll { $0.t < cutoff }
+        points.append(HistoryPoint(t: now, used: round2(gb(s.used)), swap: round2(gb(s.swapUsed))))
+        if Date.now.timeIntervalSince(lastSave) > 300 {
+            compact()
+            save()
         }
-        if Date.now.timeIntervalSince(lastSave) > 300 { save() }
     }
 
     func save() {
@@ -53,22 +65,69 @@ final class MemoryHistory {
         }
     }
 
-    /// Points from the last `seconds`, thinned to at most `maxCount` by keeping each bucket's peak.
-    func points(lastSeconds seconds: TimeInterval, maxCount: Int = 240) -> [HistoryPoint] {
-        let cutoff = Date.now.timeIntervalSince1970 - seconds
+    /// Drops points older than 7 days and thins those older than 24 h to one per minute.
+    private func compact() {
+        let now = Date.now.timeIntervalSince1970
+        let oldest = now - keep, detailed = now - fullDetail
+        var result: [HistoryPoint] = []
+        result.reserveCapacity(points.count)
+        var bucket: (key: Int, peak: HistoryPoint)?
+        for p in points where p.t >= oldest {
+            guard p.t < detailed else {
+                if let b = bucket { result.append(b.peak); bucket = nil }
+                result.append(p)
+                continue
+            }
+            let key = Int(p.t / thinnedStep)
+            if let b = bucket, b.key == key {
+                if p.used + p.swap > b.peak.used + b.peak.swap { bucket = (key, p) }
+            } else {
+                if let b = bucket { result.append(b.peak) }
+                bucket = (key, p)
+            }
+        }
+        if let b = bucket { result.append(b.peak) }
+        points = result
+    }
+
+    /// Points from the last `seconds`, thinned to at most `maxCount` by keeping each time
+    /// slot's peak, and split into segments wherever recording stopped.
+    func chartPoints(lastSeconds seconds: TimeInterval, maxCount: Int = 300) -> [ChartPoint] {
+        let now = Date.now.timeIntervalSince1970
+        let cutoff = now - seconds
         let recent = points.drop { $0.t < cutoff }
-        guard recent.count > maxCount else { return Array(recent) }
-        let bucket = Int((Double(recent.count) / Double(maxCount)).rounded(.up))
-        return stride(from: recent.startIndex, to: recent.endIndex, by: bucket).compactMap { start in
-            recent[start..<min(start + bucket, recent.endIndex)].max { $0.used + $0.swap < $1.used + $1.swap }
+        let slot = max(interval, seconds / Double(maxCount))
+
+        var thinned: [HistoryPoint] = []
+        var current: (key: Int, peak: HistoryPoint)?
+        for p in recent {
+            let key = Int((p.t - cutoff) / slot)
+            if let c = current, c.key == key {
+                if p.used + p.swap > c.peak.used + c.peak.swap { current = (key, p) }
+            } else {
+                if let c = current { thinned.append(c.peak) }
+                current = (key, p)
+            }
+        }
+        if let c = current { thinned.append(c.peak) }
+
+        // A gap is anything clearly longer than the spacing the data was recorded or thinned at.
+        var segment = 0
+        var previous: TimeInterval?
+        return thinned.map { p in
+            let spacing = max(slot, now - p.t > fullDetail ? thinnedStep : interval)
+            if let previous, p.t - previous > spacing * 3 { segment += 1 }
+            previous = p.t
+            return ChartPoint(date: p.date, used: p.used, swap: p.swap, segment: segment)
         }
     }
 
     private func gb(_ bytes: UInt64) -> Double { Double(bytes) / 1_073_741_824 }
+    private func round2(_ x: Double) -> Double { (x * 100).rounded() / 100 }
 }
 
 enum HistoryRange: Int, CaseIterable, Identifiable {
-    case quarterHour = 900, hour = 3600, sixHours = 21600, day = 86400
+    case quarterHour = 900, hour = 3600, sixHours = 21600, day = 86400, week = 604800
     var id: Int { rawValue }
     var label: String {
         switch self {
@@ -76,6 +135,7 @@ enum HistoryRange: Int, CaseIterable, Identifiable {
         case .hour: "1h"
         case .sixHours: "6h"
         case .day: "24h"
+        case .week: "7d"
         }
     }
 }
@@ -88,7 +148,7 @@ struct HistoryChart: View {
     private var totalGB: Double { Double(totalBytes) / 1_073_741_824 }
 
     var body: some View {
-        let pts = history.points(lastSeconds: TimeInterval(range.rawValue))
+        let pts = history.chartPoints(lastSeconds: TimeInterval(range.rawValue))
         let peak = pts.map { $0.used + $0.swap }.max() ?? 0
         let top = max(totalGB, peak) * 1.08
 
@@ -106,7 +166,9 @@ struct HistoryChart: View {
             }
 
             if pts.count < 2 {
-                Text("Collecting data… the graph fills in over the next minute.")
+                Text(range == .week && !pts.isEmpty
+                     ? "Collecting data… the 7-day graph fills in as RAM Watch runs."
+                     : "Collecting data… the graph fills in over the next minute.")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 110)
             } else {
@@ -115,16 +177,16 @@ struct HistoryChart: View {
                         AreaMark(
                             x: .value("Time", p.date),
                             yStart: .value("GB", 0), yEnd: .value("GB", p.used),
-                            series: .value("Series", "Used"))
+                            series: .value("Series", "Used \(p.segment)"))
                             .foregroundStyle(Color.blue.opacity(0.28))
                         AreaMark(
                             x: .value("Time", p.date),
                             yStart: .value("GB", p.used), yEnd: .value("GB", p.used + p.swap),
-                            series: .value("Series", "Swap"))
+                            series: .value("Series", "Swap \(p.segment)"))
                             .foregroundStyle(Color.red.opacity(0.6))
                         LineMark(
                             x: .value("Time", p.date), y: .value("GB", p.used),
-                            series: .value("Series", "UsedLine"))
+                            series: .value("Series", "Line \(p.segment)"))
                             .foregroundStyle(Color.blue)
                             .lineStyle(StrokeStyle(lineWidth: 1.5))
                     }
@@ -142,10 +204,18 @@ struct HistoryChart: View {
                         AxisValueLabel { if let v = value.as(Double.self) { Text("\(Int(v)) GB") } }
                     }
                 }
+                .chartXScale(domain: Date.now.addingTimeInterval(-TimeInterval(range.rawValue))...Date.now)
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisGridLine()
-                        AxisValueLabel(format: .dateTime.hour().minute())
+                    if range == .week {
+                        AxisMarks(values: .stride(by: .day)) { _ in
+                            AxisGridLine()
+                            AxisValueLabel(format: .dateTime.weekday(.abbreviated), centered: true)
+                        }
+                    } else {
+                        AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                            AxisGridLine()
+                            AxisValueLabel(format: range == .day ? .dateTime.hour() : .dateTime.hour().minute())
+                        }
                     }
                 }
                 .frame(height: 110)
