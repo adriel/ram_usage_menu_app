@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The parts of RAM shown in the stacked bar, with plain-language explanations.
 enum MemoryPart: CaseIterable, Identifiable {
-    case app, wired, compressed, cached, free
+    case app, wired, compressed, free
     var id: Self { self }
 
     var label: String {
@@ -11,7 +11,6 @@ enum MemoryPart: CaseIterable, Identifiable {
         case .app: "App memory"
         case .wired: "Wired"
         case .compressed: "Compressed"
-        case .cached: "Cached files"
         case .free: "Free"
         }
     }
@@ -21,8 +20,7 @@ enum MemoryPart: CaseIterable, Identifiable {
         case .app: .blue
         case .wired: .purple
         case .compressed: .teal
-        case .cached: .gray.opacity(0.55)
-        case .free: .primary.opacity(0.08)
+        case .free: .gray.opacity(0.35)
         }
     }
 
@@ -34,10 +32,8 @@ enum MemoryPart: CaseIterable, Identifiable {
             "Memory macOS keeps for itself: the system core, drivers and graphics. It can't be compressed, swapped or freed."
         case .compressed:
             "App memory macOS has squeezed to make room, rather than writing it to disk. A lot of compressed memory means RAM is running short."
-        case .cached:
-            "Copies of recently used files kept in spare RAM so they open faster. macOS hands this back to apps instantly, so it's effectively free."
         case .free:
-            "Memory nothing is using. Little free memory is normal: macOS fills spare RAM with cached files to speed things up."
+            "Memory apps can have straight away. macOS keeps recently used files in spare RAM so they open faster, and hands that space back the moment an app needs it."
         }
     }
 
@@ -46,8 +42,7 @@ enum MemoryPart: CaseIterable, Identifiable {
         case .app: s.app
         case .wired: s.wired
         case .compressed: s.compressed
-        case .cached: s.cached
-        case .free: s.free
+        case .free: s.cached + s.free   // cached files are given back instantly, so count them as free
         }
     }
 }
@@ -508,6 +503,22 @@ private struct MemoryPartCard: View {
                         .font(.caption)
                     }
                 }
+                .padding(.top, 2)
+            }
+            if part == .free {
+                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 3) {
+                    GridRow {
+                        Text("Cached files (given back when needed)")
+                        Spacer()
+                        Text(formatBytes(snapshot.cached)).monospacedDigit().gridColumnAlignment(.trailing)
+                    }
+                    GridRow {
+                        Text("Completely unused")
+                        Spacer()
+                        Text(formatBytes(snapshot.free)).monospacedDigit().gridColumnAlignment(.trailing)
+                    }
+                }
+                .font(.caption)
                 .padding(.top, 2)
             }
         }
