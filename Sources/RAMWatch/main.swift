@@ -59,6 +59,21 @@ if let i = CommandLine.arguments.firstIndex(of: "--close-tab") {
     RunLoop.main.run()
 }
 
+// `RAMWatch --spotify-cache [clear]` lists the Spotify cache folders and their size; `clear` empties them.
+if let i = CommandLine.arguments.firstIndex(of: "--spotify-cache") {
+    let target = CacheTarget.spotify
+    Task {
+        for folder in target.folders() { print("  \(folder.path)") }
+        print("Size: \(formatDiskBytes(await target.size()))\(target.isRunning ? "  (Spotify is open)" : "")")
+        if CommandLine.arguments.dropFirst(i + 1).first == "clear" {
+            if target.isRunning { print("Quit Spotify first.") }
+            else { print("Freed \(formatDiskBytes(await target.clear()))") }
+        }
+        exit(0)
+    }
+    RunLoop.main.run()
+}
+
 // `RAMWatch --update` checks GitHub and, if there's a newer release, installs it over this copy.
 if CommandLine.arguments.contains("--update") {
     Task {

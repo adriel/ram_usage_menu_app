@@ -16,6 +16,9 @@ enum Pref {
     static let autoCheckUpdates = "autoCheckUpdates"
     static let autoInstallUpdates = "autoInstallUpdates"
     static let lastUpdateCheck = "lastUpdateCheck"
+    static let spotifyCleanEnabled = "spotifyCleanEnabled"
+    static let spotifyCleanDays = "spotifyCleanDays"
+    static let spotifyLastCleaned = "spotifyLastCleaned"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -30,6 +33,8 @@ enum Pref {
             refreshSeconds: 2.0,
             autoCheckUpdates: true,
             autoInstallUpdates: true,
+            spotifyCleanEnabled: false,
+            spotifyCleanDays: 7,
         ])
     }
 }

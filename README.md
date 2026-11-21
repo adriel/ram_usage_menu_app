@@ -19,6 +19,12 @@ Click the icon to see:
 
 Open **Settings…** from the dropdown to change the red and orange levels, turn notifications on or off, set the app to open at login, and control updates.
 
+**Spotify cache:** Settings can also clear Spotify's cache every day, week or month (off by default). It removes streamed songs and the cache Spotify's built-in web browser keeps for its interface, but leaves your login and settings alone. It's only cleared while Spotify is closed: if Spotify is open when a clear is due, RAM Watch clears it right after you quit Spotify. Songs downloaded for offline listening are removed too. To check the size from the terminal:
+
+```bash
+"build/RAM Watch.app/Contents/MacOS/RAMWatch" --spotify-cache          # add "clear" to empty it
+```
+
 ## Build
 
 Requires macOS 27 or later on Apple Silicon, with Xcode or the Command Line Tools (Swift 6.2+) installed.

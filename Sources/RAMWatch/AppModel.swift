@@ -70,6 +70,7 @@ final class AppModel {
     var tabsStatus: TabsStatus = .idle
     var runningBrowsers: [Browser] = []
     let updater = Updater()
+    let spotifyCleaner = SpotifyCacheCleaner()
 
     var section: PopoverSection =
         PopoverSection(rawValue: UserDefaults.standard.string(forKey: Pref.popoverSection) ?? "") ?? .overview {

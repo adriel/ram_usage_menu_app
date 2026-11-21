@@ -56,6 +56,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Scheduled Spotify cache clean, checked hourly (and whenever Spotify quits; see SpotifyCacheCleaner).
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            while let self, !Task.isCancelled {
+                await self.model.spotifyCleaner.cleanIfDue()
+                try? await Task.sleep(for: .seconds(3600))
+            }
+        }
+
         if UserDefaults.standard.bool(forKey: Pref.warningEnabled) || UserDefaults.standard.bool(forKey: Pref.diskWarningEnabled) {
             Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
         }
@@ -204,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openSettings() {
         popover.performClose(nil)
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(updater: model.updater)))
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(updater: model.updater, spotify: model.spotifyCleaner)))
             window.title = "RAM Watch Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
