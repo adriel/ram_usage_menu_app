@@ -5,12 +5,19 @@ import AppKit
 enum StatusIcon {
     private static let height: CGFloat = 18
     private static let corner: CGFloat = 5
+    private static let textPadding: CGFloat = 5
     private static let glyphBase = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
     private static let textFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
 
     /// Square badge: coloured tile + white chip (green / orange states).
     static func badge(fill: NSColor, symbol: String = "memorychip.fill") -> NSImage {
         pill(fill: fill, symbol: symbol, text: nil)
+    }
+
+    /// Where the swap dot goes: the chip's top right corner, measured from the image's top left.
+    static func swapDotCenter(hasText: Bool) -> NSPoint {
+        // With text the chip sits at the pill's left, so its corner is a little further right.
+        NSPoint(x: hasText ? textPadding + height - 5 : height - 4, y: 4)
     }
 
     /// Several badges side by side in one image.
@@ -41,7 +48,7 @@ enum StatusIcon {
         }
         let textSize = attributed?.size() ?? .zero
 
-        let padding: CGFloat = attributed == nil ? 0 : 5
+        let padding: CGFloat = attributed == nil ? 0 : textPadding
         let gap: CGFloat = attributed == nil ? 0 : 3
         let width = attributed == nil
             ? height

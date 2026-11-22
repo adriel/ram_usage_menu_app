@@ -7,6 +7,7 @@ A tiny macOS menu bar app that shows, at a glance, whether your Mac is running o
 | 🟢 Green | No swap in use and memory used is below the orange level |
 | 🟠 Orange | Memory used is over the set % (default 80%), memory pressure is "Warning", or some swap is in use |
 | 🔴 Red pill with swap amount | Swap used is over the set amount (default 1 GB), or memory pressure is "Critical" |
+| Pulsing red dot on the chip | The Mac is reading or writing swap (over 1 MB/s). The dot stays for about 10 seconds after the last burst and doesn't change the icon's colour |
 
 An orange drive badge next to the memory badge means free disk space is low (default: under 30 GB, measured like Finder). Hover over it or open the menu for the exact free space. macOS needs free disk space for swap.
 
@@ -84,4 +85,4 @@ You only do this once: later updates install automatically, without the Gatekeep
 
 ## About swap
 
-macOS often leaves old data in swap long after memory has freed up, so a Mac can show swap in use and still be running fine. If the icon stays red when nothing feels slow, turn on **Only when memory pressure is high or the Mac is actively swapping**.
+macOS often leaves old data in swap long after memory has freed up, so a Mac can show swap in use and still be running fine. If the icon stays red when nothing feels slow, turn on **Only when memory pressure is high**. Swapping still shows the pulsing dot, and still sends the notification when swap is over the red level.

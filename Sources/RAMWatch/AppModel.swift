@@ -135,14 +135,12 @@ final class AppModel {
 }
 
 /// Decides the traffic-light colour from a snapshot and the user's settings.
+/// Swap activity is left out on purpose: it comes in bursts, so it gets the pulsing dot instead.
 func evaluateHealth(_ s: MemorySnapshot, defaults d: UserDefaults = .standard) -> Health {
-    let swapLimit = UInt64(max(0, d.integer(forKey: Pref.swapWarningMB))) * 1_048_576
-    let pressureHigh = s.pressure != .normal || s.isActivelySwapping
+    var swapIsRed = isSwapOverLimit(s, defaults: d)
+    if d.bool(forKey: Pref.requirePressure) { swapIsRed = swapIsRed && s.pressure != .normal }
 
-    var swapOverLimit = s.swapUsed > swapLimit
-    if d.bool(forKey: Pref.requirePressure) { swapOverLimit = swapOverLimit && pressureHigh }
-
-    if swapOverLimit || s.pressure == .critical { return .swapping }
+    if swapIsRed || s.pressure == .critical { return .swapping }
 
     let orangePct = Double(d.integer(forKey: Pref.orangeUsedPercent)) / 100
     if s.usedFraction >= orangePct
@@ -151,4 +149,13 @@ func evaluateHealth(_ s: MemorySnapshot, defaults d: UserDefaults = .standard) -
         return .tight
     }
     return .good
+}
+
+/// Whether to send the memory notification: when red, or when swapping with swap over the red level.
+func shouldWarn(_ s: MemorySnapshot, health: Health, defaults d: UserDefaults = .standard) -> Bool {
+    health == .swapping || (s.isActivelySwapping && isSwapOverLimit(s, defaults: d))
+}
+
+private func isSwapOverLimit(_ s: MemorySnapshot, defaults d: UserDefaults) -> Bool {
+    s.swapUsed > UInt64(max(0, d.integer(forKey: Pref.swapWarningMB))) * 1_048_576
 }

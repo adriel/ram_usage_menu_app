@@ -41,18 +41,21 @@ struct SettingsView: View {
                         Text("8 GB").font(.caption)
                     }
                 }
-                Toggle("Only when memory pressure is high or the Mac is actively swapping", isOn: $requirePressure)
-                    .help("macOS often leaves old data sitting in swap even after memory frees up. Turn this on to ignore that idle swap and only warn when it's actually slowing the Mac down.")
+                Toggle("Only when memory pressure is high", isOn: $requirePressure)
+                    .help("macOS often leaves old data sitting in swap even after memory frees up. Turn this on to ignore that idle swap and only turn red when memory is actually running short.")
             } header: {
                 Text("Red: swap")
+            } footer: {
+                Text("Reading or writing swap doesn't change the colour. It shows a pulsing red dot on the chip instead.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section {
-                Toggle("Show a notification when it turns red", isOn: $warningEnabled)
+                Toggle("Show a notification when memory runs out", isOn: $warningEnabled)
             } header: {
                 Text("Warning")
             } footer: {
-                Text("Sent when it first turns red, then at most every 30 minutes while it stays red.")
+                Text("Sent when it turns red, or when the Mac is swapping with swap over the red level. At most every 30 minutes.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

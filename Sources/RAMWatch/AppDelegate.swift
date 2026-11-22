@@ -6,6 +6,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = AppModel()
     private let sampler = MemorySampler()
     private var statusItem: NSStatusItem!
+    private let swapDot = SwapDotView()
+    private var lastSwapActivity = Date.distantPast
+    /// Swapping comes in bursts, so keep the dot up between them.
+    private let swapDotLinger: TimeInterval = 10
     private let popover = NSPopover()
     private var settingsWindow: NSWindow?
 
@@ -28,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.action = #selector(togglePopover(_:))
             button.imagePosition = .imageLeading
             button.setAccessibilityLabel("RAM Watch")
+            swapDot.frame = button.bounds
+            swapDot.autoresizingMask = [.width, .height]
+            button.addSubview(swapDot)
         }
 
         model.openSettings = { [weak self] in self?.openSettings() }
@@ -102,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.health = health
         model.diskLow = diskLow
         model.history.record(snap)
+        if snap.isActivelySwapping { lastSwapActivity = .now }
 
         if popover.isShown {
             switch model.section {
@@ -117,10 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Warnings (notifications)
 
     private func handleWarning(health: Health, snapshot: MemorySnapshot) {
-        let red = health == .swapping
-        defer { warningActive = red }
-        // Notify once when it turns red (and again at most every 30 minutes while it stays red).
-        guard red, UserDefaults.standard.bool(forKey: Pref.warningEnabled) else { return }
+        let warn = shouldWarn(snapshot, health: health)
+        defer { warningActive = warn }
+        // Notify at most every 30 minutes while red or swapping over the red level.
+        guard warn, UserDefaults.standard.bool(forKey: Pref.warningEnabled) else { return }
         if let last = lastNotifiedAt, Date.now.timeIntervalSince(last) < minNotifyGap { return }
         lastNotifiedAt = .now
         sendNotification(snapshot)
@@ -190,10 +198,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
         }
 
+        let showDot = Date.now.timeIntervalSince(lastSwapActivity) < swapDotLinger
+        let chipHasText = showText && (health == .swapping || lowDisk != nil)
+        swapDot.update(visible: showDot, center: StatusIcon.swapDotCenter(hasText: chipHasText))
+
         var tip = "\(model.memoryHealth.title): \(formatBytes(snap.used)) of \(formatBytes(snap.total)) used, swap \(formatBytes(snap.swapUsed))"
         if let disk = lowDisk {
             tip += "\nLow disk space: \(formatDiskBytes(disk.free)) free (warns below \(UserDefaults.standard.integer(forKey: Pref.diskWarningGB)) GB)"
         }
+        if showDot { tip += "\nRed dot: your Mac is reading or writing swap" }
         button.toolTip = tip
     }
 
