@@ -89,11 +89,11 @@ enum ProcessMemory {
     static func topApps(limit: Int) -> [AppMemoryUsage] {
         let me = getpid()
         var groups: [pid_t: (bytes: UInt64, count: Int)] = [:]
+        var resolved: [pid_t: pid_t] = [:]
 
         for pid in allPids() {
             guard let fp = footprint(of: pid), fp > 0 else { continue }
-            var owner = responsibleFor?(pid) ?? pid
-            if owner <= 1 { owner = pid }
+            let owner = owningApp(of: responsible(for: pid), cache: &resolved)
             groups[owner, default: (0, 0)].bytes += fp
             groups[owner, default: (0, 0)].count += 1
         }
@@ -112,6 +112,30 @@ enum ProcessMemory {
                     canQuit: info.canQuit
                 )
             }
+    }
+
+    private static func responsible(for pid: pid_t) -> pid_t {
+        let owner = responsibleFor?(pid) ?? pid
+        return owner <= 1 ? pid : owner
+    }
+
+    /// Some apps start helpers that give up being counted as theirs ("disclaim" responsibility),
+    /// e.g. Claude starts each Claude Code session that way, so each would be listed on its own.
+    /// A group whose owner was started by another process (not launchd) and isn't an app
+    /// in its own right is folded into whatever owns that parent.
+    private static func owningApp(of owner: pid_t, cache: inout [pid_t: pid_t]) -> pid_t {
+        if let known = cache[owner] { return known }
+        var current = owner
+        for _ in 0..<8 {
+            guard let parent = parent(of: current), parent > 1,
+                  NSRunningApplication(processIdentifier: current)?.activationPolicy != .regular
+            else { break }
+            let next = responsible(for: parent)
+            if next == current { break }
+            current = next
+        }
+        cache[owner] = current
+        return current
     }
 
     private struct Identity {
