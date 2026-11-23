@@ -102,32 +102,69 @@ enum ProcessMemory {
             .sorted { $0.value.bytes > $1.value.bytes }
             .prefix(limit)
             .map { owner, value in
-                var name: String?
-                var icon: NSImage?
-                var canQuit = false
-
-                if let running = NSRunningApplication(processIdentifier: owner) {
-                    name = running.localizedName
-                    icon = running.icon
-                    canQuit = running.activationPolicy == .regular && owner != me
-                }
-                if name == nil || icon == nil, let path = executablePath(of: owner) {
-                    if let bundle = appBundlePath(from: path) {
-                        name = name ?? (bundle as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
-                        icon = icon ?? NSWorkspace.shared.icon(forFile: bundle)
-                    } else {
-                        name = name ?? (path as NSString).lastPathComponent
-                    }
-                }
-
+                let info = identity(of: owner, me: me)
                 return AppMemoryUsage(
                     id: owner,
-                    name: name ?? "pid \(owner)",
-                    icon: icon,
+                    name: info.name,
+                    icon: info.icon,
                     bytes: value.bytes,
                     processCount: value.count,
-                    canQuit: canQuit
+                    canQuit: info.canQuit
                 )
             }
+    }
+
+    private struct Identity {
+        let name: String
+        let icon: NSImage?
+        let canQuit: Bool
+    }
+
+    /// Name and icon per process, kept while the menu is open so each refresh doesn't
+    /// load every app's full-size icon again.
+    private static var identities: [pid_t: Identity] = [:]
+
+    static func clearIconCache() { identities = [:] }
+
+    private static func identity(of owner: pid_t, me: pid_t) -> Identity {
+        if let cached = identities[owner] { return cached }
+        var name: String?
+        var icon: NSImage?
+        var canQuit = false
+
+        if let running = NSRunningApplication(processIdentifier: owner) {
+            name = running.localizedName
+            icon = running.icon
+            canQuit = running.activationPolicy == .regular && owner != me
+        }
+        if name == nil || icon == nil, let path = executablePath(of: owner) {
+            if let bundle = appBundlePath(from: path) {
+                name = name ?? (bundle as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+                icon = icon ?? NSWorkspace.shared.icon(forFile: bundle)
+            } else {
+                name = name ?? (path as NSString).lastPathComponent
+            }
+        }
+        let result = Identity(name: name ?? "pid \(owner)", icon: icon.map(thumbnail), canQuit: canQuit)
+        identities[owner] = result
+        return result
+    }
+
+    /// The list draws icons at 18 pt. An app icon holds images up to 1024 px, so keep
+    /// one small bitmap instead (36 px covers Retina).
+    private static func thumbnail(_ image: NSImage) -> NSImage {
+        let px = 36
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: rep)
+        else { return image }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: px, height: px))
+        NSGraphicsContext.restoreGraphicsState()
+        let small = NSImage(size: NSSize(width: 18, height: 18))
+        small.addRepresentation(rep)
+        return small
     }
 }

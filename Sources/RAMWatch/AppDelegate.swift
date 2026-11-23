@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UserNotifications
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
     private let model = AppModel()
     private let sampler = MemorySampler()
     private var statusItem: NSStatusItem!
@@ -10,8 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastSwapActivity = Date.distantPast
     /// Swapping comes in bursts, so keep the dot up between them.
     private let swapDotLinger: TimeInterval = 10
-    private let popover = NSPopover()
+    /// Built each time the menu opens and thrown away when it closes: a SwiftUI view tree
+    /// (chart, text layouts, window backing store) kept alive in the background costs tens of MB.
+    private var popover: NSPopover?
     private var settingsWindow: NSWindow?
+    /// What the menu bar button last showed, so an unchanged reading doesn't redraw it.
+    private var buttonKey = ""
 
     private var sampleTask: Task<Void, Never>?
 
@@ -40,12 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.openSettings = { [weak self] in self?.openSettings() }
         model.refreshApps = { [weak self] in self?.model.apps = ProcessMemory.topApps(limit: 8) }
 
-        let host = NSHostingController(rootView: PopoverView(model: model))
-        host.sizingOptions = .preferredContentSize
-        popover.contentViewController = host
-        popover.behavior = .transient
-
         startSampling()
+        // Loading the saved history leaves freed scratch memory behind; hand it back.
+        releaseFreeMemory()
 
         // React immediately to settings changes (and pick up a new refresh interval).
         Task { [weak self] in
@@ -58,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(20))
             while let self, !Task.isCancelled {
-                await self.model.updater.checkIfDue(canInstall: !self.popover.isShown)
+                await self.model.updater.checkIfDue(canInstall: !self.isPopoverShown)
                 try? await Task.sleep(for: .seconds(3600))
             }
         }
@@ -111,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.history.record(snap)
         if snap.isActivelySwapping { lastSwapActivity = .now }
 
-        if popover.isShown {
+        if isPopoverShown {
             switch model.section {
             case .overview, .apps: model.apps = ProcessMemory.topApps(limit: 8)
             case .tabs: model.refreshTabs()
@@ -171,6 +172,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let showText = UserDefaults.standard.bool(forKey: Pref.showText)
         let lowDisk = model.diskLow ? model.disk : nil
         let percent = "\(Int((snap.usedFraction * 100).rounded()))%"
+        let showDot = Date.now.timeIntervalSince(lastSwapActivity) < swapDotLinger
+
+        // Most readings change nothing visible. Skip those: every new image is drawn and
+        // sent to the menu bar again.
+        let key = "\(health)|\(showText)|\(percent)|\(formatBytes(snap.swapUsed))|\(lowDisk.map { formatDiskBytes($0.free) } ?? "")|\(showDot)|\(model.memoryHealth)|\(formatBytes(snap.used))|\(UserDefaults.standard.integer(forKey: Pref.diskWarningGB))"
+        guard key != buttonKey else { return }
+        buttonKey = key
 
         // Memory badge. Red: one solid red pill with the swap amount, readable on any wallpaper.
         let memory: NSImage
@@ -198,7 +206,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
         }
 
-        let showDot = Date.now.timeIntervalSince(lastSwapActivity) < swapDotLinger
         let chipHasText = showText && (health == .swapping || lowDisk != nil)
         swapDot.update(visible: showDot, center: StatusIcon.swapDotCenter(hasText: chipHasText))
 
@@ -212,28 +219,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Popover & settings
 
+    private var isPopoverShown: Bool { popover?.isShown == true }
+
     @objc private func togglePopover(_ sender: Any?) {
-        if popover.isShown {
+        if let popover, popover.isShown {
             popover.performClose(sender)
         } else if let button = statusItem.button {
             model.apps = ProcessMemory.topApps(limit: 8)
             if model.section == .tabs { model.refreshTabs(force: true) }
+
+            let host = NSHostingController(rootView: PopoverView(model: model))
+            host.sizingOptions = .preferredContentSize
+            let popover = NSPopover()
+            popover.contentViewController = host
+            popover.behavior = .transient
+            popover.delegate = self
+            self.popover = popover
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
     }
 
+    func popoverDidClose(_ notification: Notification) {
+        guard let closed = notification.object as? NSPopover, closed === popover else { return }
+        popover = nil
+        // Let AppKit finish with it first, then drop the views and the app icons.
+        Task {
+            closed.contentViewController = nil
+            model.apps = []
+            ProcessMemory.clearIconCache()
+            try? await Task.sleep(for: .seconds(1))
+            releaseFreeMemory()
+        }
+    }
+
     private func openSettings() {
-        popover.performClose(nil)
+        popover?.performClose(nil)
         if settingsWindow == nil {
             let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(updater: model.updater, spotify: model.spotifyCleaner)))
             window.title = "RAM Watch Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
+            window.delegate = self
             settingsWindow = window
         }
         NSApp.activate()
         settingsWindow?.center()
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
+
+    /// Settings is rarely open, so don't keep its window around once it closes.
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        settingsWindow = nil
+        Task {
+            window.contentViewController = nil
+            try? await Task.sleep(for: .seconds(1))
+            releaseFreeMemory()
+        }
+    }
+}
+
+/// Returns memory that has been freed but is still held by the allocator to the system,
+/// so the footprint drops after the menu or Settings closes.
+func releaseFreeMemory() {
+    malloc_zone_pressure_relief(nil, 0)
 }

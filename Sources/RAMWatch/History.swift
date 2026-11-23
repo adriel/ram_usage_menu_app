@@ -3,12 +3,13 @@ import Foundation
 import Observation
 import SwiftUI
 
-struct HistoryPoint: Codable, Identifiable {
-    let t: TimeInterval   // seconds since 1970
-    let used: Double      // GB
-    let swap: Double      // GB
-    var id: TimeInterval { t }
-    var date: Date { Date(timeIntervalSince1970: t) }
+/// One reading, 12 bytes. Kept small because a week of history is about 17,000 of them.
+struct HistoryPoint {
+    let t: UInt32      // seconds since 1970
+    let used: Float    // GB
+    let swap: Float    // GB
+    var time: TimeInterval { TimeInterval(t) }
+    var total: Float { used + swap }
 }
 
 /// A point ready to draw. `segment` changes wherever recording stopped (Mac asleep or
@@ -23,7 +24,8 @@ struct ChartPoint: Identifiable {
 
 /// Rolling 7-day record of memory used + swap, saved to Application Support so the graph
 /// survives restarts. The last 24 h keep a point every 10 s; older data is thinned to one
-/// point per minute (each minute's peak), which keeps the file around 1 MB.
+/// point per minute (each minute's peak). Saved as raw 12-byte records (about 200 KB),
+/// which loads and saves without building any temporary objects.
 @Observable
 final class MemoryHistory {
     private(set) var points: [HistoryPoint] = []
@@ -34,24 +36,45 @@ final class MemoryHistory {
     @ObservationIgnored private let thinnedStep: TimeInterval = 60
     @ObservationIgnored private var lastSave = Date.distantPast
 
-    private static let fileURL: URL = {
+    private static let directory: URL = {
         let dir = URL.applicationSupportDirectory.appending(path: "RAM Watch", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appending(path: "history.json")
+        return dir
     }()
+    private static let fileURL = directory.appending(path: "history.bin")
+    /// Format used up to 1.1.6, read once and then removed.
+    private static let legacyURL = directory.appending(path: "history.json")
 
     init() {
-        if let data = try? Data(contentsOf: Self.fileURL),
-           let saved = try? JSONDecoder().decode([HistoryPoint].self, from: data) {
-            points = saved.sorted { $0.t < $1.t }
+        // An old-format file is the newest data if one exists (it's only written by 1.1.6 and earlier).
+        if let data = try? Data(contentsOf: Self.legacyURL) {
+            if let saved = try? JSONDecoder().decode([LegacyPoint].self, from: data) {
+                points = saved.map { HistoryPoint(t: UInt32(clamping: Int($0.t)), used: Float($0.used), swap: Float($0.swap)) }
+                save()
+            }
+            try? FileManager.default.removeItem(at: Self.legacyURL)
+        } else if let data = try? Data(contentsOf: Self.fileURL) {
+            let stride = MemoryLayout<HistoryPoint>.stride
+            points = [HistoryPoint](unsafeUninitializedCapacity: data.count / stride) { buffer, count in
+                count = data.copyBytes(to: buffer) / stride
+            }
+        }
+        if !points.isEmpty {
+            points.sort { $0.t < $1.t }
             compact()
         }
     }
 
+    private struct LegacyPoint: Decodable {
+        let t: Double
+        let used: Double
+        let swap: Double
+    }
+
     func record(_ s: MemorySnapshot) {
         let now = Date.now.timeIntervalSince1970.rounded()
-        if let last = points.last, now - last.t < interval - 0.5 { return }
-        points.append(HistoryPoint(t: now, used: round2(gb(s.used)), swap: round2(gb(s.swapUsed))))
+        if let last = points.last, now - last.time < interval - 0.5 { return }
+        points.append(HistoryPoint(t: UInt32(now), used: round2(gb(s.used)), swap: round2(gb(s.swapUsed))))
         if Date.now.timeIntervalSince(lastSave) > 300 {
             compact()
             save()
@@ -60,9 +83,8 @@ final class MemoryHistory {
 
     func save() {
         lastSave = .now
-        if let data = try? JSONEncoder().encode(points) {
-            try? data.write(to: Self.fileURL, options: .atomic)
-        }
+        let data = points.withUnsafeBufferPointer { Data(buffer: $0) }
+        try? data.write(to: Self.fileURL, options: .atomic)
     }
 
     /// Drops points older than 7 days and thins those older than 24 h to one per minute.
@@ -72,15 +94,15 @@ final class MemoryHistory {
         var result: [HistoryPoint] = []
         result.reserveCapacity(points.count)
         var bucket: (key: Int, peak: HistoryPoint)?
-        for p in points where p.t >= oldest {
-            guard p.t < detailed else {
+        for p in points where p.time >= oldest {
+            guard p.time < detailed else {
                 if let b = bucket { result.append(b.peak); bucket = nil }
                 result.append(p)
                 continue
             }
-            let key = Int(p.t / thinnedStep)
+            let key = Int(p.time / thinnedStep)
             if let b = bucket, b.key == key {
-                if p.used + p.swap > b.peak.used + b.peak.swap { bucket = (key, p) }
+                if p.total > b.peak.total { bucket = (key, p) }
             } else {
                 if let b = bucket { result.append(b.peak) }
                 bucket = (key, p)
@@ -92,18 +114,21 @@ final class MemoryHistory {
 
     /// Points from the last `seconds`, thinned to at most `maxCount` by keeping each time
     /// slot's peak, and split into segments wherever recording stopped.
-    func chartPoints(lastSeconds seconds: TimeInterval, maxCount: Int = 300) -> [ChartPoint] {
+    /// About two pixels per point across the menu's width: enough to look smooth, and each
+    /// point costs three chart marks while the menu is open.
+    func chartPoints(lastSeconds seconds: TimeInterval, maxCount: Int = 160) -> [ChartPoint] {
         let now = Date.now.timeIntervalSince1970
         let cutoff = now - seconds
-        let recent = points.drop { $0.t < cutoff }
+        let recent = points.drop { $0.time < cutoff }
         let slot = max(interval, seconds / Double(maxCount))
 
         var thinned: [HistoryPoint] = []
+        thinned.reserveCapacity(min(recent.count, maxCount + 1))
         var current: (key: Int, peak: HistoryPoint)?
         for p in recent {
-            let key = Int((p.t - cutoff) / slot)
+            let key = Int((p.time - cutoff) / slot)
             if let c = current, c.key == key {
-                if p.used + p.swap > c.peak.used + c.peak.swap { current = (key, p) }
+                if p.total > c.peak.total { current = (key, p) }
             } else {
                 if let c = current { thinned.append(c.peak) }
                 current = (key, p)
@@ -115,15 +140,15 @@ final class MemoryHistory {
         var segment = 0
         var previous: TimeInterval?
         return thinned.map { p in
-            let spacing = max(slot, now - p.t > fullDetail ? thinnedStep : interval)
-            if let previous, p.t - previous > spacing * 3 { segment += 1 }
-            previous = p.t
-            return ChartPoint(date: p.date, used: p.used, swap: p.swap, segment: segment)
+            let spacing = max(slot, now - p.time > fullDetail ? thinnedStep : interval)
+            if let previous, p.time - previous > spacing * 3 { segment += 1 }
+            previous = p.time
+            return ChartPoint(date: Date(timeIntervalSince1970: p.time), used: Double(p.used), swap: Double(p.swap), segment: segment)
         }
     }
 
-    private func gb(_ bytes: UInt64) -> Double { Double(bytes) / 1_073_741_824 }
-    private func round2(_ x: Double) -> Double { (x * 100).rounded() / 100 }
+    private func gb(_ bytes: UInt64) -> Float { Float(Double(bytes) / 1_073_741_824) }
+    private func round2(_ x: Float) -> Float { (x * 100).rounded() / 100 }
 }
 
 enum HistoryRange: Int, CaseIterable, Identifiable {
